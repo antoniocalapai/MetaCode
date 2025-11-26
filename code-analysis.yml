@@ -1,0 +1,62 @@
+name: Code Analysis
+
+on:
+  push:
+  schedule:
+    - cron: "0 4 * * *"   # Every night at 04:00
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          pip install openai tiktoken
+
+      - name: Run analysis
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          python3 << 'EOF'
+from openai import OpenAI
+import os
+import json
+
+client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+
+# Collect all Python code from repo
+files = []
+for root, _, filenames in os.walk(".", topdown=True):
+    for filename in filenames:
+        if filename.endswith(".py"):
+            with open(os.path.join(root, filename), "r", errors="ignore") as f:
+                files.append(f.read())
+
+# Send to OpenAI for analysis
+response = client.chat.completions.create(
+    model="gpt-4o-mini",
+    messages=[
+        {"role": "system", "content": "You are a code analysis engine."},
+        {"role": "user", "content": f"Analyze this code base: {files[:50]}"}
+    ]
+)
+
+report = response.choices[0].message["content"]
+
+# Save report
+with open("CODE_ANALYSIS.md", "w") as f:
+    f.write("# Automated Code Report\n\n")
+    f.write(report)
+EOF
+
+      - name: Commit report
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add CODE_ANALYSIS.md
+          git commit -m "Update automated code analysis" || true
+          git push
