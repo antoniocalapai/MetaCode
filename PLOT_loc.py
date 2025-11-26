@@ -7,8 +7,8 @@ from collections import defaultdict
 # -----------------------------------------
 # CONFIG
 # -----------------------------------------
-SAVE_PLOTS = 0
-CLOSE_PLOTS = 0
+SAVE_PLOTS = 1
+CLOSE_PLOTS = 1
 
 # -----------------------------------------
 # PATHS
