@@ -20,15 +20,12 @@ RESULTS_DIR = Path("/Users/acalapai/Desktop/CodeAnalysis/results")
 # Make sure the results directory exists
 RESULTS_DIR.mkdir(exist_ok=True)
 
-# -----------------------------------------
+# -------------------------------------------------------
 # PSEUDO-COMPLEXITY (simple model + dict comprehensions)
-# -----------------------------------------
+# -------------------------------------------------------
 
 def compute_pseudo_complexity(text: str):
-    """
-    Simple pseudo-complexity:
-    Counts decision-making keywords + dictionary comprehensions.
-    """
+    """Counts decision-making keywords + dictionary comprehensions."""
     keywords = [
         "if ", "elif ", "for ", "while ",
         "try:", "except", " and ", " or "
@@ -36,42 +33,79 @@ def compute_pseudo_complexity(text: str):
 
     decision_points = 0
 
-    # Count keywords
     for kw in keywords:
         decision_points += text.count(kw)
 
-    # Detect dictionary comprehensions: { ... for ... in ... }
     dict_pattern = r"\{[^}]*for[^}]*\}"
     dict_matches = re.findall(dict_pattern, text, flags=re.DOTALL)
     dict_comp_count = len(dict_matches)
 
-    decision_points += dict_comp_count  # add dict comp weight
+    decision_points += dict_comp_count
 
     return {
         "decision_points": decision_points,
         "dict_comprehensions": dict_comp_count,
     }
 
-# -----------------------------------------
+# -------------------------------------------------------
+# FUNCTION CALL EXTRACTION (Mode C)
+# -------------------------------------------------------
+
+def extract_function_calls(tree):
+    """
+    Extract all function calls in Python:
+      cv2.imread  → "cv2.imread"
+      torch.nn.functional.relu → "torch.nn.functional.relu"
+      os.path.join → "os.path.join"
+      myfunc() → "myfunc"
+    """
+    calls = []
+
+    for node in ast.walk(tree):
+
+        if isinstance(node, ast.Call):
+            func = node.func
+
+            # Case 1: simple function call: func()
+            if isinstance(func, ast.Name):
+                calls.append(func.id)
+
+            # Case 2: attribute call: module.func()
+            elif isinstance(func, ast.Attribute):
+                parts = []
+                curr = func
+                while isinstance(curr, ast.Attribute):
+                    parts.append(curr.attr)
+                    curr = curr.value
+                # final base
+                if isinstance(curr, ast.Name):
+                    parts.append(curr.id)
+                full = ".".join(reversed(parts))
+                calls.append(full)
+
+    return calls
+
+# -------------------------------------------------------
 # FILE DISCOVERY
-# -----------------------------------------
+# -------------------------------------------------------
 
 def get_source_files(repo_path: Path):
     """Return all source-code files (Python + MATLAB)."""
     exts = [".py", ".m"]
     return [p for p in repo_path.rglob("*") if p.suffix in exts]
 
-# -----------------------------------------
+# -------------------------------------------------------
 # PYTHON FILE ANALYSIS
-# -----------------------------------------
+# -------------------------------------------------------
 
 def analyze_python_file(file_path: Path):
-    """Analyze a Python file with LOC, comments, imports, AST, radon, pseudo-complexity."""
+    """Analyze a Python file with LOC, comments, imports, AST, radon, pseudo-complexity, function calls."""
     try:
         text = file_path.read_text(errors="ignore")
     except Exception:
         m = empty_metrics()
         m["pseudo_complexity"] = compute_pseudo_complexity("")
+        m["function_calls"] = []
         return m
 
     lines = text.splitlines()
@@ -80,11 +114,11 @@ def analyze_python_file(file_path: Path):
     num_comments = sum(1 for l in lines if l.strip().startswith("#"))
     num_blank = sum(1 for l in lines if not l.strip())
 
-    # AST metrics
     num_functions = 0
     function_names = []
     num_classes = 0
     imports_counter = Counter()
+    function_calls = []
 
     try:
         tree = ast.parse(text)
@@ -92,6 +126,7 @@ def analyze_python_file(file_path: Path):
         tree = None
 
     if tree is not None:
+        # Extract AST info
         for node in ast.walk(tree):
 
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -108,6 +143,9 @@ def analyze_python_file(file_path: Path):
             elif isinstance(node, ast.ImportFrom):
                 if node.module:
                     imports_counter[node.module.split(".")[0]] += 1
+
+        # Extract function calls
+        function_calls = extract_function_calls(tree)
 
     # Radon complexity
     avg_cc = max_cc = total_cc = 0.0
@@ -134,7 +172,6 @@ def analyze_python_file(file_path: Path):
         "cc_values": cc_values,
     }
 
-    # Pseudo complexity (works always)
     pseudo = compute_pseudo_complexity(text)
 
     return {
@@ -147,11 +184,12 @@ def analyze_python_file(file_path: Path):
         "imports": dict(imports_counter),
         "complexity": complexity,
         "pseudo_complexity": pseudo,
+        "function_calls": function_calls,
     }
 
-# -----------------------------------------
+# -------------------------------------------------------
 # MATLAB FILE ANALYSIS
-# -----------------------------------------
+# -------------------------------------------------------
 
 def analyze_matlab_file(file_path: Path):
     """Basic metrics for MATLAB .m files + pseudo complexity."""
@@ -160,6 +198,7 @@ def analyze_matlab_file(file_path: Path):
     except Exception:
         m = empty_metrics()
         m["pseudo_complexity"] = compute_pseudo_complexity("")
+        m["function_calls"] = []
         return m
 
     lines = text.splitlines()
@@ -186,11 +225,12 @@ def analyze_matlab_file(file_path: Path):
             "cc_values": []
         },
         "pseudo_complexity": pseudo,
+        "function_calls": [],      # MATLAB function call parsing not implemented
     }
 
-# -----------------------------------------
+# -------------------------------------------------------
 # DEFAULT METRIC STRUCTURE
-# -----------------------------------------
+# -------------------------------------------------------
 
 def empty_metrics():
     return {
@@ -211,12 +251,13 @@ def empty_metrics():
         "pseudo_complexity": {
             "decision_points": 0,
             "dict_comprehensions": 0
-        }
+        },
+        "function_calls": []
     }
 
-# -----------------------------------------
+# -------------------------------------------------------
 # ANALYZE ALL REPOSITORIES
-# -----------------------------------------
+# -------------------------------------------------------
 
 report = {}
 global_imports = Counter()
@@ -270,9 +311,9 @@ for repo in REPOS_DIR.iterdir():
         "files": files_metrics,
     }
 
-# -----------------------------------------
+# -------------------------------------------------------
 # GLOBAL STATISTICS
-# -----------------------------------------
+# -------------------------------------------------------
 
 relative_imports = {
     module: count / total_source_files if total_source_files else 0.0
@@ -292,9 +333,9 @@ global_summary = {
 
 report["_global"] = global_summary
 
-# -----------------------------------------
+# -------------------------------------------------------
 # SAVE RESULTS
-# -----------------------------------------
+# -------------------------------------------------------
 
 with open(RESULTS_DIR / "analysis.json", "w") as f:
     json.dump(report, f, indent=2)
