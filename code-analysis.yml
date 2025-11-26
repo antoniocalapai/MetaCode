@@ -3,7 +3,7 @@ name: Code Analysis
 on:
   push:
   schedule:
-    - cron: "0 4 * * *"   # Every night at 04:00
+    - cron: "0 4 * * *"
 
 jobs:
   analyze:
@@ -17,41 +17,44 @@ jobs:
         run: |
           pip install openai tiktoken
 
-      - name: Run analysis
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      - name: Create analysis script
         run: |
-          python3 << 'EOF'
+          cat << 'EOF' > analysis.py
 from openai import OpenAI
 import os
-import json
 
 client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
-# Collect all Python code from repo
 files = []
 for root, _, filenames in os.walk(".", topdown=True):
     for filename in filenames:
         if filename.endswith(".py"):
-            with open(os.path.join(root, filename), "r", errors="ignore") as f:
-                files.append(f.read())
+            try:
+                with open(os.path.join(root, filename), "r", errors="ignore") as f:
+                    files.append(f.read())
+            except:
+                pass
 
-# Send to OpenAI for analysis
 response = client.chat.completions.create(
     model="gpt-4o-mini",
     messages=[
         {"role": "system", "content": "You are a code analysis engine."},
-        {"role": "user", "content": f"Analyze this code base: {files[:50]}"}
+        {"role": "user", "content": "Analyze this code base:\n\n" + str(files[:50])}
     ]
 )
 
 report = response.choices[0].message["content"]
 
-# Save report
 with open("CODE_ANALYSIS.md", "w") as f:
     f.write("# Automated Code Report\n\n")
     f.write(report)
 EOF
+
+      - name: Run analysis
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          python3 analysis.py
 
       - name: Commit report
         run: |
