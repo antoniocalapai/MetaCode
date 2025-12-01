@@ -1,156 +1,123 @@
 import json
 from pathlib import Path
 import matplotlib.pyplot as plt
+import seaborn as sns
 import squarify
-from collections import defaultdict
 
-# -----------------------------------------
-# CONFIG
-# -----------------------------------------
+# Seaborn style
+sns.set_theme(style="whitegrid")
+
 SAVE_PLOTS = 1
 CLOSE_PLOTS = 1
 
-# -----------------------------------------
-# PATHS
-# -----------------------------------------
 BASE = Path("/Users/acalapai/Desktop/CodeAnalysis")
 RESULTS_DIR = BASE / "results"
 ANALYSIS_FILE = RESULTS_DIR / "analysis.json"
 
-# -----------------------------------------
-# LOAD DATA
-# -----------------------------------------
 with open(ANALYSIS_FILE, "r") as f:
     report = json.load(f)
 
-# -----------------------------------------
-# EXTRACT LOC AND FILE-LEVEL METRICS
-# -----------------------------------------
+# ============================================================
+# EXTRACT DATA
+# ============================================================
+
+# Languages
+languages = report["_languages"]
+lang_names = list(languages.keys())
+lang_loc = [languages[l]["total_loc"] for l in lang_names]
+
+# Repositories
 repo_names = []
 repo_loc = []
 repo_num_files = []
-file_loc_per_repo = defaultdict(list)
+file_loc_per_repo = {}
 
 for repo_name, repo_data in report.items():
-    if repo_name == "_global":
-        continue  # skip summary
+    if repo_name.startswith("_"):
+        continue
 
     repo_names.append(repo_name)
     repo_loc.append(repo_data["total_lines"])
     repo_num_files.append(repo_data["num_source_files"])
+    file_loc_per_repo[repo_name] = [f["loc"] for f in repo_data["files"].values()]
 
-    for fpath, fdata in repo_data["files"].items():
-        file_loc_per_repo[repo_name].append(fdata["loc"])
+# Histogram data
+all_locs = [loc for repo in file_loc_per_repo.values() for loc in repo]
 
-# ----------------------------------------------------------
-# 1. HORIZONTAL BAR PLOT
-# ----------------------------------------------------------
-plt.figure(figsize=(10, 6))
-plt.barh(repo_names, repo_loc)
-plt.xlabel("Lines of Code")
-plt.title("LOC per Repository (horizontal)")
-plt.tight_layout()
 
-if SAVE_PLOTS:
-    plt.savefig(RESULTS_DIR / "loc_horizontal.png")
-if CLOSE_PLOTS:
-    plt.close()
-else:
-    plt.show()
+# ============================================================
+# ONE-PAGE DASHBOARD
+# ============================================================
 
-# ----------------------------------------------------------
-# 2. PIE CHART
-# ----------------------------------------------------------
-plt.figure(figsize=(8, 8))
-plt.pie(repo_loc, labels=repo_names, autopct='%1.1f%%')
-plt.title("LOC share per repository")
-plt.tight_layout()
+fig, axs = plt.subplots(3, 2, figsize=(14, 18))
+fig.suptitle(
+    "LOC Dashboard\nLOC = Lines of Code (including comments + blanks)",
+    fontsize=18, weight="bold", y=0.98
+)
 
-if SAVE_PLOTS:
-    plt.savefig(RESULTS_DIR / "loc_pie.png")
-if CLOSE_PLOTS:
-    plt.close()
-else:
-    plt.show()
+# ------------------------------------------------------------
+# (1) LOC per language
+# ------------------------------------------------------------
+ax = axs[0, 0]
+sns.barplot(x=lang_names, y=lang_loc, ax=ax, palette="Blues_d")
+ax.set_xticklabels(lang_names, rotation=45, ha="right")
+ax.set_title("LOC per Language")
+ax.set_ylabel("LOC")
 
-# ----------------------------------------------------------
-# 3. TREEMAP (with zero-size protection)
-# ----------------------------------------------------------
-treemap_sizes = []
-treemap_labels = []
+# ------------------------------------------------------------
+# (2) Pie chart
+# ------------------------------------------------------------
+ax = axs[0, 1]
+ax.pie(lang_loc, labels=lang_names, autopct='%1.1f%%')
+ax.set_title("Language LOC Share")
 
-for name, loc in zip(repo_names, repo_loc):
-    if loc > 0:  # squarify cannot handle zeroes
-        treemap_sizes.append(loc)
-        treemap_labels.append(name)
+# ------------------------------------------------------------
+# (3) LOC per repository
+# ------------------------------------------------------------
+ax = axs[1, 0]
+sns.barplot(y=repo_names, x=repo_loc, ax=ax, palette="Greens_d")
+ax.set_title("LOC per Repository")
+ax.set_xlabel("LOC")
 
-if treemap_sizes:
-    plt.figure(figsize=(12, 8))
-    squarify.plot(sizes=treemap_sizes, label=treemap_labels, alpha=0.8)
-    plt.title("LOC Treemap")
-    plt.axis("off")
+# ------------------------------------------------------------
+# (4) Treemap
+# ------------------------------------------------------------
+ax = axs[1, 1]
+sizes = [loc for loc in repo_loc if loc > 0]
+labels = [repo_names[i] for i, loc in enumerate(repo_loc) if loc > 0]
+if sizes:
+    squarify.plot(sizes=sizes, label=labels, ax=ax, alpha=0.8)
+ax.set_title("Repository LOC Treemap")
+ax.axis("off")
 
-    if SAVE_PLOTS:
-        plt.savefig(RESULTS_DIR / "loc_treemap.png")
-    if CLOSE_PLOTS:
-        plt.close()
-    else:
-        plt.show()
-else:
-    print("No repositories with LOC > 0 — treemap skipped.")
-
-# ----------------------------------------------------------
-# 4. SCATTER: LOC vs NUMBER OF FILES
-# ----------------------------------------------------------
-plt.figure(figsize=(10, 6))
-plt.scatter(repo_num_files, repo_loc, s=120)
-
+# ------------------------------------------------------------
+# (5) LOC vs number of files
+# ------------------------------------------------------------
+ax = axs[2, 0]
+sns.scatterplot(x=repo_num_files, y=repo_loc, s=100, ax=ax)
 for i, name in enumerate(repo_names):
-    plt.text(repo_num_files[i], repo_loc[i], name)
+    ax.text(repo_num_files[i], repo_loc[i], name)
+ax.set_title("LOC vs Number of Files (per Repo)")
+ax.set_xlabel("# Files")
+ax.set_ylabel("LOC")
 
-plt.xlabel("Number of source files")
-plt.ylabel("Total LOC")
-plt.title("LOC vs Number of Files per Repository")
-plt.tight_layout()
+# ------------------------------------------------------------
+# (6) LOC histogram
+# ------------------------------------------------------------
+ax = axs[2, 1]
+sns.histplot(all_locs, bins=40, ax=ax, kde=False, color="purple")
+ax.set_title("LOC Histogram (All Files)")
+ax.set_xlabel("LOC")
+ax.set_ylabel("File Count")
 
+plt.tight_layout(rect=[0, 0, 1, 0.95])
+
+# SAVE
+out = RESULTS_DIR / "loc_dashboard.png"
 if SAVE_PLOTS:
-    plt.savefig(RESULTS_DIR / "loc_vs_files.png")
-if CLOSE_PLOTS:
-    plt.close()
-else:
-    plt.show()
+    plt.savefig(out)
+    print("Saved", out)
 
-# ----------------------------------------------------------
-# 5. BOXPLOT: FILE SIZE DISTRIBUTION PER REPO
-# ----------------------------------------------------------
-plt.figure(figsize=(12, 6))
-plt.boxplot(file_loc_per_repo.values(), labels=file_loc_per_repo.keys(), vert=True)
-plt.xticks(rotation=45, ha="right")
-plt.ylabel("LOC per file")
-plt.title("Per-file LOC distribution per repository")
-plt.tight_layout()
-
-if SAVE_PLOTS:
-    plt.savefig(RESULTS_DIR / "loc_boxplot.png")
-if CLOSE_PLOTS:
-    plt.close()
-else:
-    plt.show()
-
-# ----------------------------------------------------------
-# 6. HISTOGRAM: ALL FILE LOC DISTRIBUTION
-# ----------------------------------------------------------
-all_locs = [loc for repos in file_loc_per_repo.values() for loc in repos]
-
-plt.figure(figsize=(10, 6))
-plt.hist(all_locs, bins=40)
-plt.xlabel("LOC")
-plt.ylabel("File count")
-plt.title("Histogram of LOC across all files")
-plt.tight_layout()
-
-if SAVE_PLOTS:
-    plt.savefig(RESULTS_DIR / "loc_histogram.png")
 if CLOSE_PLOTS:
     plt.close()
 else:
