@@ -19,9 +19,18 @@ RESULTS_DIR = Path("/Users/acalapai/Desktop/CodeAnalysis/results")
 RESULTS_DIR.mkdir(exist_ok=True)
 
 # -------------------------------------------------------
-# LANGUAGE MAP (ext -> language label)
+# EXCLUDE DIRS — IMPORTANT FIX
 # -------------------------------------------------------
+EXCLUDE_DIRS = {
+    "__pycache__", ".git", ".vscode", ".idea",
+    "venv", ".venv", "env", "build", "dist",
+    "site-packages", "node_modules",
+    ".ipynb_checkpoints"
+}
 
+# -------------------------------------------------------
+# LANGUAGE MAP
+# -------------------------------------------------------
 LANGUAGE_MAP = {
     ".py": "python",
     ".m": "matlab",
@@ -44,49 +53,27 @@ LANGUAGE_MAP = {
 }
 
 # -------------------------------------------------------
-# PSEUDO-COMPLEXITY (simple model + dict comprehensions)
+# PSEUDO COMPLEXITY
 # -------------------------------------------------------
-
 def compute_pseudo_complexity(text: str):
-    """Counts decision-making keywords + dictionary comprehensions."""
-    keywords = [
-        "if ", "elif ", "for ", "while ",
-        "try:", "except", " and ", " or "
-    ]
-    decision_points = 0
-
-    for kw in keywords:
-        decision_points += text.count(kw)
-
-    dict_pattern = r"\{[^}]*for[^}]*\}"
-    dict_matches = re.findall(dict_pattern, text, flags=re.DOTALL)
-
-    decision_points += len(dict_matches)
-
+    keywords = ["if ", "elif ", "for ", "while ", "try:", "except", " and ", " or "]
+    decision_points = sum(text.count(kw) for kw in keywords)
+    dict_matches = re.findall(r"\{[^}]*for[^}]*\}", text, flags=re.DOTALL)
     return {
-        "decision_points": decision_points,
+        "decision_points": decision_points + len(dict_matches),
         "dict_comprehensions": len(dict_matches),
     }
 
 # -------------------------------------------------------
-# FUNCTION CALL EXTRACTION (Python)
+# PYTHON FUNCTION CALL EXTRACTION
 # -------------------------------------------------------
-
 def extract_function_calls(tree):
-    """
-    Extract all function calls from Python AST, e.g.:
-      cv2.imread -> "cv2.imread"
-      os.path.join -> "os.path.join"
-      myfunc -> "myfunc"
-    """
     calls = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):
             func = node.func
-
             if isinstance(func, ast.Name):
                 calls.append(func.id)
-
             elif isinstance(func, ast.Attribute):
                 parts = []
                 curr = func
@@ -96,31 +83,22 @@ def extract_function_calls(tree):
                 if isinstance(curr, ast.Name):
                     parts.append(curr.id)
                 calls.append(".".join(reversed(parts)))
-
     return calls
 
 # -------------------------------------------------------
-# COMMENT COUNTING PER LANGUAGE
+# COMMENT COUNTER
 # -------------------------------------------------------
-
 def count_comments(text: str, language: str) -> int:
     lines = text.splitlines()
     num_comments = 0
 
-    # Hash-based comments (Python, shell, yaml)
     if language in ("python", "shell", "yaml"):
-        for l in lines:
-            if l.strip().startswith("#"):
-                num_comments += 1
+        return sum(1 for l in lines if l.strip().startswith("#"))
 
-    # MATLAB (%)
-    elif language == "matlab":
-        for l in lines:
-            if l.strip().startswith("%"):
-                num_comments += 1
+    if language == "matlab":
+        return sum(1 for l in lines if l.strip().startswith("%"))
 
-    # C / C++ / JS / TS / CSS : // and /* ... */
-    elif language in ("c", "cpp", "c_header", "javascript", "typescript", "css"):
+    if language in ("c", "cpp", "javascript", "typescript", "css"):
         in_block = False
         for l in lines:
             s = l.strip()
@@ -129,16 +107,14 @@ def count_comments(text: str, language: str) -> int:
                 if "*/" in s:
                     in_block = False
                 continue
-
             if s.startswith("//"):
                 num_comments += 1
             elif "/*" in s:
                 num_comments += 1
-                if "*/" not in s or s.index("/*") < s.index("*/"):
+                if "*/" not in s:
                     in_block = True
 
-    # HTML / XML / Markdown-style HTML comments: <!-- ... -->
-    elif language in ("html", "xml", "markdown"):
+    if language in ("html", "xml"):
         in_block = False
         for l in lines:
             s = l.strip()
@@ -147,31 +123,26 @@ def count_comments(text: str, language: str) -> int:
                 if "-->" in s:
                     in_block = False
                 continue
-
             if "<!--" in s:
                 num_comments += 1
-                if "-->" not in s or s.index("<!--") < s.index("-->"):
+                if "-->" not in s:
                     in_block = True
-
-    # JSON / text / svg / others: no structured comments counted
-    else:
-        num_comments = 0
 
     return num_comments
 
 # -------------------------------------------------------
-# FILE DISCOVERY
+# FILE DISCOVERY — WITH EXCLUDED FOLDERS
 # -------------------------------------------------------
-
 def get_source_files(repo_path: Path):
-    """
-    Return list of (path, language) for files whose extension
-    is in LANGUAGE_MAP.
-    """
     files = []
     for p in repo_path.rglob("*"):
         if not p.is_file():
             continue
+
+        # Skip excluded directories
+        if any(ex in p.parts for ex in EXCLUDE_DIRS):
+            continue
+
         lang = LANGUAGE_MAP.get(p.suffix.lower())
         if lang:
             files.append((p, lang))
@@ -180,7 +151,6 @@ def get_source_files(repo_path: Path):
 # -------------------------------------------------------
 # PYTHON FILE ANALYSIS
 # -------------------------------------------------------
-
 def analyze_python_file(file_path: Path):
     try:
         text = file_path.read_text(errors="ignore")
@@ -205,26 +175,22 @@ def analyze_python_file(file_path: Path):
     except SyntaxError:
         tree = None
 
-    if tree is not None:
+    if tree:
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 num_functions += 1
                 function_names.append(node.name)
-
             elif isinstance(node, ast.ClassDef):
                 num_classes += 1
-
             elif isinstance(node, ast.Import):
                 for name in node.names:
                     imports_counter[name.name.split(".")[0]] += 1
-
             elif isinstance(node, ast.ImportFrom):
                 if node.module:
                     imports_counter[node.module.split(".")[0]] += 1
 
         function_calls = extract_function_calls(tree)
 
-    # Radon complexity
     avg_cc = max_cc = total_cc = 0.0
     num_entities = 0
     cc_values = []
@@ -241,16 +207,6 @@ def analyze_python_file(file_path: Path):
         except Exception:
             pass
 
-    complexity = {
-        "avg_cc": avg_cc,
-        "max_cc": max_cc,
-        "total_cc": total_cc,
-        "num_entities": num_entities,
-        "cc_values": cc_values,
-    }
-
-    pseudo = compute_pseudo_complexity(text)
-
     return {
         "language": "python",
         "loc": loc,
@@ -260,15 +216,20 @@ def analyze_python_file(file_path: Path):
         "function_names": function_names,
         "num_classes": num_classes,
         "imports": dict(imports_counter),
-        "complexity": complexity,
-        "pseudo_complexity": pseudo,
+        "complexity": {
+            "avg_cc": avg_cc,
+            "max_cc": max_cc,
+            "total_cc": total_cc,
+            "num_entities": num_entities,
+            "cc_values": cc_values,
+        },
+        "pseudo_complexity": compute_pseudo_complexity(text),
         "function_calls": function_calls,
     }
 
 # -------------------------------------------------------
-# MATLAB FILE ANALYSIS
+# MATLAB + GENERIC ANALYSIS
 # -------------------------------------------------------
-
 def analyze_matlab_file(file_path: Path):
     try:
         text = file_path.read_text(errors="ignore")
@@ -278,34 +239,22 @@ def analyze_matlab_file(file_path: Path):
         return m
 
     lines = text.splitlines()
-    loc = len(lines)
-    num_blank = sum(1 for l in lines if not l.strip())
-    num_comments = count_comments(text, "matlab")
-    pseudo = compute_pseudo_complexity(text)
-
     return {
         "language": "matlab",
-        "loc": loc,
-        "num_comments": num_comments,
-        "num_blank": num_blank,
+        "loc": len(lines),
+        "num_comments": count_comments(text, "matlab"),
+        "num_blank": sum(1 for l in lines if not l.strip()),
         "num_functions": 0,
         "function_names": [],
         "num_classes": 0,
         "imports": {},
         "complexity": {
-            "avg_cc": 0.0,
-            "max_cc": 0.0,
-            "total_cc": 0.0,
-            "num_entities": 0,
-            "cc_values": []
+            "avg_cc": 0.0, "max_cc": 0.0, "total_cc": 0.0,
+            "num_entities": 0, "cc_values": []
         },
-        "pseudo_complexity": pseudo,
+        "pseudo_complexity": compute_pseudo_complexity(text),
         "function_calls": [],
     }
-
-# -------------------------------------------------------
-# GENERIC FILE ANALYSIS (non-Python/MATLAB)
-# -------------------------------------------------------
 
 def analyze_generic_file(file_path: Path, language: str):
     try:
@@ -316,35 +265,26 @@ def analyze_generic_file(file_path: Path, language: str):
         return m
 
     lines = text.splitlines()
-    loc = len(lines)
-    num_blank = sum(1 for l in lines if not l.strip())
-    num_comments = count_comments(text, language)
-    pseudo = compute_pseudo_complexity(text)
-
     return {
         "language": language,
-        "loc": loc,
-        "num_comments": num_comments,
-        "num_blank": num_blank,
+        "loc": len(lines),
+        "num_comments": count_comments(text, language),
+        "num_blank": sum(1 for l in lines if not l.strip()),
         "num_functions": 0,
         "function_names": [],
         "num_classes": 0,
         "imports": {},
         "complexity": {
-            "avg_cc": 0.0,
-            "max_cc": 0.0,
-            "total_cc": 0.0,
-            "num_entities": 0,
-            "cc_values": []
+            "avg_cc": 0.0, "max_cc": 0.0, "total_cc": 0.0,
+            "num_entities": 0, "cc_values": []
         },
-        "pseudo_complexity": pseudo,
+        "pseudo_complexity": compute_pseudo_complexity(text),
         "function_calls": [],
     }
 
 # -------------------------------------------------------
-# DEFAULT METRICS
+# EMPTY TEMPLATE
 # -------------------------------------------------------
-
 def empty_metrics():
     return {
         "language": None,
@@ -356,43 +296,38 @@ def empty_metrics():
         "num_classes": 0,
         "imports": {},
         "complexity": {
-            "avg_cc": 0.0,
-            "max_cc": 0.0,
-            "total_cc": 0.0,
-            "num_entities": 0,
-            "cc_values": []
+            "avg_cc": 0.0, "max_cc": 0.0, "total_cc": 0.0,
+            "num_entities": 0, "cc_values": []
         },
-        "pseudo_complexity": {
-            "decision_points": 0,
-            "dict_comprehensions": 0
-        },
+        "pseudo_complexity": {"decision_points": 0, "dict_comprehensions": 0},
         "function_calls": [],
     }
 
 # -------------------------------------------------------
-# ANALYZE ALL REPOS
+# MAIN ANALYSIS LOOP
 # -------------------------------------------------------
-
 report = {}
 global_imports = Counter()
-global_total_loc = 0
-global_total_functions = 0
-total_source_files = 0
 
 language_stats = defaultdict(lambda: {
     "total_loc": 0,
+    "total_blank": 0,
+    "total_comments": 0,
+    "total_functions": 0,
     "total_pseudo_complexity": 0,
     "total_radon_complexity": 0,
-    "total_comments": 0,
-    "total_blank": 0,
-    "num_files": 0
+    "num_files": 0,
 })
+
+total_source_files = 0
+global_total_loc = 0
+global_total_functions = 0
 
 for repo in REPOS_DIR.iterdir():
     if not repo.is_dir():
         continue
 
-    print(f"Analyzing repository: {repo.name}")
+    print(f"Analyzing repo: {repo.name}")
 
     files_with_lang = get_source_files(repo)
     total_source_files += len(files_with_lang)
@@ -400,84 +335,95 @@ for repo in REPOS_DIR.iterdir():
     repo_total_loc = 0
     repo_total_functions = 0
     repo_import_counter = Counter()
+    repo_data = {}
 
-    files_metrics = {}
-
-    for p, lang in files_with_lang:
-
+    for file_path, lang in files_with_lang:
         if lang == "python":
-            metrics = analyze_python_file(p)
+            metrics = analyze_python_file(file_path)
         elif lang == "matlab":
-            metrics = analyze_matlab_file(p)
+            metrics = analyze_matlab_file(file_path)
         else:
-            metrics = analyze_generic_file(p, lang)
+            metrics = analyze_generic_file(file_path, lang)
 
-        rel_path = str(p.relative_to(repo))
-        files_metrics[rel_path] = metrics
+        relative = str(file_path.relative_to(repo))
+        repo_data[relative] = metrics
 
-        # Repo stats
+        # Per repo
         repo_total_loc += metrics["loc"]
         repo_total_functions += metrics["num_functions"]
         repo_import_counter.update(metrics["imports"])
 
-        # Global stats
+        # Global
         global_total_loc += metrics["loc"]
         global_total_functions += metrics["num_functions"]
-        global_imports.update(metrics["imports"])
 
-        # Language stats
+        # Per language
         language_stats[lang]["total_loc"] += metrics["loc"]
-        language_stats[lang]["total_pseudo_complexity"] += metrics["pseudo_complexity"]["decision_points"]
-        language_stats[lang]["total_comments"] += metrics["num_comments"]
         language_stats[lang]["total_blank"] += metrics["num_blank"]
+        language_stats[lang]["total_comments"] += metrics["num_comments"]
+        language_stats[lang]["total_functions"] += metrics["num_functions"]
+        language_stats[lang]["total_pseudo_complexity"] += metrics["pseudo_complexity"]["decision_points"]
         language_stats[lang]["num_files"] += 1
 
         if lang == "python":
             language_stats[lang]["total_radon_complexity"] += metrics["complexity"]["total_cc"]
+            global_imports.update(metrics["imports"])
 
     report[repo.name] = {
-        "total_lines": repo_total_loc,
-        "num_source_files": len(files_with_lang),
+        "total_loc": repo_total_loc,
         "total_functions": repo_total_functions,
-        "avg_functions_per_file": (
-            repo_total_functions / len(files_with_lang) if files_with_lang else 0.0
-        ),
+        "num_source_files": len(files_with_lang),
         "imports": repo_import_counter.most_common(),
-        "files": files_metrics,
+        "files": repo_data,
     }
 
 # -------------------------------------------------------
-# GLOBAL SUMMARY + LANGUAGE SUMMARY
+# GLOBAL SUMMARY
 # -------------------------------------------------------
-
 relative_imports = {
-    module: count / total_source_files if total_source_files else 0.0
-    for module, count in global_imports.items()
-}
+    m: c / total_source_files for m, c in global_imports.items()
+} if total_source_files else {}
 
-global_summary = {
+report["_global"] = {
     "total_source_files": total_source_files,
     "total_loc": global_total_loc,
     "total_functions": global_total_functions,
     "global_import_counts": global_imports.most_common(),
-    "global_import_relative_freq": sorted(
-        [(m, f) for m, f in relative_imports.items()],
-        key=lambda x: -x[1]
-    )
+    "global_import_relative_freq": sorted(relative_imports.items(), key=lambda x: -x[1]),
 }
 
-report["_global"] = global_summary
-report["_languages"] = {lang: stats for lang, stats in language_stats.items()}
+report["_languages"] = dict(language_stats)
 
 # -------------------------------------------------------
-# SAVE
+# PYTHON SUMMARY
 # -------------------------------------------------------
+py = language_stats.get("python", None)
 
+if py and py["total_loc"] > 0:
+    comment_ratio = py["total_comments"] / py["total_loc"]
+else:
+    comment_ratio = 0.0
+
+python_summary = {
+    "python_loc": py["total_loc"] if py else 0,
+    "python_files": py["num_files"] if py else 0,
+    "python_functions": py["total_functions"] if py else 0,
+    "avg_cyclomatic_complexity": (
+        py["total_radon_complexity"] / py["num_files"]
+        if py and py["num_files"] > 0 else 0
+    ),
+    "comment_ratio": comment_ratio,
+}
+
+with open(RESULTS_DIR / "python_summary.json", "w") as f:
+    json.dump(python_summary, f, indent=2)
+
+print("✓ python_summary.json written")
+
+# -------------------------------------------------------
+# SAVE FULL
+# -------------------------------------------------------
 with open(RESULTS_DIR / "analysis.json", "w") as f:
     json.dump(report, f, indent=2)
 
-print("\n▶ Done! Results saved to results/analysis.json")
-print(f"Total files scanned (tracked types): {total_source_files}")
-print(f"Global total LOC: {global_total_loc}")
-print(f"Global total functions: {global_total_functions}")
-print("Languages found:", list(language_stats.keys()))
+print("\nDone. Languages:", list(language_stats.keys()))
