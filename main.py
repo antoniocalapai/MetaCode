@@ -14,12 +14,12 @@ except ImportError:
     print("[WARNING] radon not installed. Cyclomatic complexity will be empty.")
 
 # Root folders
-REPOS_DIR = Path("/Users/acalapai/Desktop/CodeAnalysis/repos")
-RESULTS_DIR = Path("/Users/acalapai/Desktop/CodeAnalysis/results")
+REPOS_DIR = Path("/Users/acalapai/Library/Mobile Documents/com~apple~CloudDocs/GitHub")
+RESULTS_DIR = Path("results")
 RESULTS_DIR.mkdir(exist_ok=True)
 
 # -------------------------------------------------------
-# EXCLUDE DIRS — IMPORTANT FIX
+# EXCLUDE DIRS
 # -------------------------------------------------------
 EXCLUDE_DIRS = {
     "__pycache__", ".git", ".vscode", ".idea",
@@ -29,27 +29,36 @@ EXCLUDE_DIRS = {
 }
 
 # -------------------------------------------------------
-# LANGUAGE MAP
+# LANGUAGE MAP (3-FIELD: lang + category)
 # -------------------------------------------------------
 LANGUAGE_MAP = {
-    ".py": "python",
-    ".m": "matlab",
-    ".html": "html",
-    ".htm": "html",
-    ".css": "css",
-    ".js": "javascript",
-    ".ts": "typescript",
-    ".json": "json",
-    ".yaml": "yaml",
-    ".yml": "yaml",
-    ".c": "c",
-    ".cpp": "cpp",
-    ".hpp": "cpp",
-    ".cc": "cpp",
-    ".sh": "shell",
-    ".bash": "shell",
-    ".zsh": "shell",
-    ".xml": "xml",
+    # Code / programming
+    ".py":   {"lang": "python",    "category": "code"},
+    ".m":    {"lang": "matlab",    "category": "code"},
+    ".js":   {"lang": "javascript","category": "code"},
+    ".ts":   {"lang": "typescript","category": "code"},
+    ".c":    {"lang": "c",         "category": "code"},
+    ".cpp":  {"lang": "cpp",       "category": "code"},
+    ".hpp":  {"lang": "cpp",       "category": "code"},
+    ".cc":   {"lang": "cpp",       "category": "code"},
+
+    # Scripts
+    ".sh":   {"lang": "shell",     "category": "script"},
+    ".bash": {"lang": "shell",     "category": "script"},
+    ".zsh":  {"lang": "shell",     "category": "script"},
+
+    # Web / markup
+    ".html": {"lang": "html",      "category": "markup"},
+    ".htm":  {"lang": "html",      "category": "markup"},
+    ".css":  {"lang": "css",       "category": "style"},
+
+    # Data / config
+    ".json": {"lang": "json",      "category": "data"},
+    ".yaml": {"lang": "yaml",      "category": "data"},
+    ".yml":  {"lang": "yaml",      "category": "data"},
+    ".csv":  {"lang": "csv",       "category": "data"},
+    ".xls":  {"lang": "excel",     "category": "data"},
+    ".xlsx": {"lang": "excel",     "category": "data"},
 }
 
 # -------------------------------------------------------
@@ -131,7 +140,7 @@ def count_comments(text: str, language: str) -> int:
     return num_comments
 
 # -------------------------------------------------------
-# FILE DISCOVERY — WITH EXCLUDED FOLDERS
+# FILE DISCOVERY
 # -------------------------------------------------------
 def get_source_files(repo_path: Path):
     files = []
@@ -139,17 +148,17 @@ def get_source_files(repo_path: Path):
         if not p.is_file():
             continue
 
-        # Skip excluded directories
         if any(ex in p.parts for ex in EXCLUDE_DIRS):
             continue
 
-        lang = LANGUAGE_MAP.get(p.suffix.lower())
-        if lang:
-            files.append((p, lang))
+        info = LANGUAGE_MAP.get(p.suffix.lower())
+        if info:
+            files.append((p, info["lang"], info["category"]))
+
     return files
 
 # -------------------------------------------------------
-# PYTHON FILE ANALYSIS
+# PYTHON ANALYSIS
 # -------------------------------------------------------
 def analyze_python_file(file_path: Path):
     try:
@@ -228,7 +237,7 @@ def analyze_python_file(file_path: Path):
     }
 
 # -------------------------------------------------------
-# MATLAB + GENERIC ANALYSIS
+# GENERIC ANALYSIS
 # -------------------------------------------------------
 def analyze_matlab_file(file_path: Path):
     try:
@@ -283,7 +292,7 @@ def analyze_generic_file(file_path: Path, language: str):
     }
 
 # -------------------------------------------------------
-# EMPTY TEMPLATE
+# EMPTY METRICS TEMPLATE
 # -------------------------------------------------------
 def empty_metrics():
     return {
@@ -319,6 +328,13 @@ language_stats = defaultdict(lambda: {
     "num_files": 0,
 })
 
+category_stats = defaultdict(lambda: {
+    "total_loc": 0,
+    "total_comments": 0,
+    "total_files": 0,
+    "total_pseudo_complexity": 0,
+})
+
 total_source_files = 0
 global_total_loc = 0
 global_total_functions = 0
@@ -337,7 +353,9 @@ for repo in REPOS_DIR.iterdir():
     repo_import_counter = Counter()
     repo_data = {}
 
-    for file_path, lang in files_with_lang:
+    for file_path, lang, category in files_with_lang:
+
+        # Select correct analysis
         if lang == "python":
             metrics = analyze_python_file(file_path)
         elif lang == "matlab":
@@ -357,7 +375,7 @@ for repo in REPOS_DIR.iterdir():
         global_total_loc += metrics["loc"]
         global_total_functions += metrics["num_functions"]
 
-        # Per language
+        # Per-language stats
         language_stats[lang]["total_loc"] += metrics["loc"]
         language_stats[lang]["total_blank"] += metrics["num_blank"]
         language_stats[lang]["total_comments"] += metrics["num_comments"]
@@ -365,6 +383,13 @@ for repo in REPOS_DIR.iterdir():
         language_stats[lang]["total_pseudo_complexity"] += metrics["pseudo_complexity"]["decision_points"]
         language_stats[lang]["num_files"] += 1
 
+        # Category stats
+        category_stats[category]["total_loc"] += metrics["loc"]
+        category_stats[category]["total_comments"] += metrics["num_comments"]
+        category_stats[category]["total_files"] += 1
+        category_stats[category]["total_pseudo_complexity"] += metrics["pseudo_complexity"]["decision_points"]
+
+        # Python only: radon + imports
         if lang == "python":
             language_stats[lang]["total_radon_complexity"] += metrics["complexity"]["total_cc"]
             global_imports.update(metrics["imports"])
@@ -392,7 +417,9 @@ report["_global"] = {
     "global_import_relative_freq": sorted(relative_imports.items(), key=lambda x: -x[1]),
 }
 
+# Store language & category summaries
 report["_languages"] = dict(language_stats)
+report["_categories"] = dict(category_stats)
 
 # -------------------------------------------------------
 # PYTHON SUMMARY
@@ -421,9 +448,10 @@ with open(RESULTS_DIR / "python_summary.json", "w") as f:
 print("✓ python_summary.json written")
 
 # -------------------------------------------------------
-# SAVE FULL
+# SAVE FULL REPORT
 # -------------------------------------------------------
 with open(RESULTS_DIR / "analysis.json", "w") as f:
     json.dump(report, f, indent=2)
 
 print("\nDone. Languages:", list(language_stats.keys()))
+print("Categories:", list(category_stats.keys()))
