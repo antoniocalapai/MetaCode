@@ -123,10 +123,15 @@ plt.close()
 # 4) Save python_summary.json
 # ============================================
 
+defs_per_file = python_functions / python_files if python_files else 0
+defs_per_kloc = python_functions / (python_loc / 1000) if python_loc else 0
+
 summary = {
     "python_loc": python_loc,
     "python_files": python_files,
     "python_functions": python_functions,
+    "defs_per_file": defs_per_file,
+    "defs_per_kloc": defs_per_kloc,
     "top_imports": top_imports,
     "avg_function_length": (
         sum(function_lengths) / len(function_lengths) if function_lengths else 0
@@ -144,6 +149,8 @@ print("✓ python_summary.json updated")
 print("Python LOC =", python_loc)
 print("Files =", python_files)
 print("Functions =", python_functions)
+print("Defs per file =", defs_per_file)
+print("Defs per KLOC =", defs_per_kloc)
 print("Comment ratio =", comment_ratio)
 
 # ============================================
