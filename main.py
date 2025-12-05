@@ -15,7 +15,7 @@ except ImportError:
 
 # Root folders
 REPOS_DIR = Path("/Users/acalapai/Library/Mobile Documents/com~apple~CloudDocs/GitHub")
-RESULTS_DIR = Path("results")
+RESULTS_DIR = Path("/Users/acalapai/Desktop/CodeAnalysis/results")
 RESULTS_DIR.mkdir(exist_ok=True)
 
 # -------------------------------------------------------
@@ -455,3 +455,7 @@ with open(RESULTS_DIR / "analysis.json", "w") as f:
 
 print("\nDone. Languages:", list(language_stats.keys()))
 print("Categories:", list(category_stats.keys()))
+
+print("\n=== FULL IMPORT LIST (raw, unfiltered) ===")
+for mod, count in global_imports.most_common():
+    print(f"{mod:20s}  {count}")
